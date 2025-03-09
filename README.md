@@ -1,6 +1,6 @@
 # Hệ thống đặt chỗ (Booking System)
 
-Hệ thống đặt chỗ xây dựng với NestJS, áp dụng Distributed Locking và Reservation Timeout để xử lý đặt chỗ đồng thời và quản lý thời gian hết hạn.
+Hệ thống đặt chỗ xây dựng với NestJS, áp dụng Distributed Locking, Reservation Timeout và Kafka để xử lý đặt chỗ đồng thời, quản lý thời gian hết hạn và xử lý khối lượng lớn yêu cầu.
 
 ## Tính năng
 
@@ -8,14 +8,45 @@ Hệ thống đặt chỗ xây dựng với NestJS, áp dụng Distributed Locki
 - **Đặt chỗ không cần đăng nhập**: Người dùng có thể đặt chỗ chỉ với email và thông tin cá nhân
 - **Distributed Locking**: Ngăn chặn race condition khi nhiều người đặt cùng một chỗ ngồi
 - **Reservation Timeout**: Tự động hết hạn các đặt chỗ chưa được xác nhận sau một khoảng thời gian
+- **Xử lý bất đồng bộ với Kafka**: Xử lý hàng nghìn yêu cầu đặt chỗ đồng thời
 - **Thanh toán ngẫu nhiên**: Mô phỏng quá trình thanh toán với xác suất thành công 80%
 - **Quản lý admin**: Quản lý phòng, chỗ ngồi và xem thông tin đặt chỗ
+
+## Kiến trúc hệ thống
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│             │     │             │     │             │     │             │
+│  API Layer  │────▶│   Kafka     │────▶│  Consumer   │────▶│  Database   │
+│             │     │   Broker    │     │  Service    │     │             │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+       │                                        │                  ▲
+       │                                        │                  │
+       │                                        ▼                  │
+       │                               ┌─────────────┐            │
+       │                               │             │            │
+       └──────────────────────────────▶│   Redis     │────────────┘
+                                       │  (Locking)  │
+                                       │             │
+                                       └─────────────┘
+```
+
+### Luồng xử lý đặt chỗ
+
+1. **API Layer** nhận yêu cầu đặt chỗ và gửi đến **Kafka Broker**
+2. **Consumer Service** lấy yêu cầu từ Kafka và xử lý:
+   - Sử dụng **Redis** để thực hiện Distributed Locking
+   - Kiểm tra tính khả dụng của chỗ ngồi
+   - Tạo đặt chỗ trong **Database**
+   - Thiết lập thời gian hết hạn (Reservation Timeout)
+3. **BookingTimeoutService** định kỳ kiểm tra và cập nhật trạng thái các đặt chỗ hết hạn
 
 ## Yêu cầu hệ thống
 
 - Node.js (>= 14.x)
 - PostgreSQL
 - Redis
+- Kafka & Zookeeper
 
 ## Cài đặt
 
@@ -63,16 +94,17 @@ JWT_EXPIRES_IN=1d
 
 # Cấu hình đặt chỗ
 BOOKING_TIMEOUT_MINUTES=10
+
+# Cấu hình Kafka
+KAFKA_BROKERS=localhost:9092
+KAFKA_CLIENT_ID=booking-system
+KAFKA_GROUP_ID=booking-system-group
 ```
 
-5. Khởi tạo cơ sở dữ liệu:
+5. Khởi động các dịch vụ với Docker Compose:
 
 ```bash
-# Tạo database trong PostgreSQL
-createdb booking_system
-
-# Chạy migration (nếu có)
-npm run migration:run
+docker-compose up -d
 ```
 
 6. Khởi động ứng dụng:
@@ -174,8 +206,8 @@ Response:
   "rows": 10,
   "columns": 10,
   "isActive": true,
-  "createdAt": "2023-03-09T...",
-  "updatedAt": "2023-03-09T..."
+  "createdAt": "2025-02-02T...",
+  "updatedAt": "2025-02-02T..."
 }
 ```
 
@@ -208,8 +240,8 @@ Response:
     "label": "A1",
     "roomId": "room-id-1",
     "isActive": true,
-    "createdAt": "2023-03-09T...",
-    "updatedAt": "2023-03-09T..."
+    "createdAt": "2025-02-02T...",
+    "updatedAt": "2025-02-02T..."
   }
   // ... các chỗ ngồi khác
 ]
@@ -236,8 +268,8 @@ Response:
     "label": "A1",
     "roomId": "room-id-1",
     "isActive": true,
-    "createdAt": "2023-03-09T...",
-    "updatedAt": "2023-03-09T..."
+    "createdAt": "2025-02-02T...",
+    "updatedAt": "2025-02-02T..."
   }
   // ... các chỗ ngồi khác
 ]
@@ -264,34 +296,32 @@ Body:
 }
 ```
 
-Response:
+Response (với Kafka):
 
 ```json
 {
-  "id": "booking-id-1",
-  "seatId": "seat-id-1",
-  "email": "user@example.com",
-  "customerName": "Nguyễn Văn A",
-  "phoneNumber": "0123456789",
-  "status": "pending",
-  "expiresAt": "2023-03-09T...",
-  "confirmationCode": "ABC12345",
-  "createdAt": "2023-03-09T...",
-  "updatedAt": "2023-03-09T..."
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "message": "Your booking request has been received and is being processed. Please check your email for confirmation."
 }
 ```
 
-Lưu `id` của đặt chỗ để sử dụng cho các bước tiếp theo.
+**Lưu ý**: Với kiến trúc Kafka, yêu cầu đặt chỗ được xử lý bất đồng bộ. Bạn sẽ nhận được một `requestId` và cần đợi một khoảng thời gian ngắn để yêu cầu được xử lý.
 
 ### Bước 6: Kiểm tra trạng thái đặt chỗ
 
-#### 6.1. Kiểm tra đặt chỗ
+#### 6.1. Kiểm tra trạng thái
 
 ```
 GET /api/bookings/check?id={bookingId}&email={email}
 ```
 
-Thay `{bookingId}` bằng ID của đặt chỗ và `{email}` bằng email đã sử dụng khi đặt chỗ.
+Thay `{bookingId}` bằng ID của đặt chỗ và `{email}` bằng email đã sử dụng để đặt chỗ.
+
+**Lưu ý**: Với kiến trúc Kafka, bạn cần biết `bookingId`. Trong môi trường thực tế, bạn có thể:
+
+- Kiểm tra logs để tìm ID
+- Triển khai một endpoint để kiểm tra trạng thái theo requestId
+- Gửi email thông báo với booking ID
 
 Response:
 
@@ -303,18 +333,9 @@ Response:
   "customerName": "Nguyễn Văn A",
   "phoneNumber": "0123456789",
   "status": "pending",
-  "expiresAt": "2023-03-09T...",
-  "confirmationCode": "ABC12345",
-  "seat": {
-    "id": "seat-id-1",
-    "row": 0,
-    "column": 0,
-    "label": "A1",
-    "roomId": "room-id-1",
-    "isActive": true
-  },
-  "createdAt": "2023-03-09T...",
-  "updatedAt": "2023-03-09T..."
+  "expiresAt": "2025-02-02T...",
+  "createdAt": "2025-02-02T...",
+  "updatedAt": "2025-02-02T..."
 }
 ```
 
@@ -326,8 +347,6 @@ Response:
 POST /api/bookings/{bookingId}/confirm
 ```
 
-Thay `{bookingId}` bằng ID của đặt chỗ.
-
 Body:
 
 ```json
@@ -336,7 +355,7 @@ Body:
 }
 ```
 
-Response (nếu thanh toán thành công - 80% xác suất):
+Response:
 
 ```json
 {
@@ -346,32 +365,20 @@ Response (nếu thanh toán thành công - 80% xác suất):
   "customerName": "Nguyễn Văn A",
   "phoneNumber": "0123456789",
   "status": "confirmed",
-  "confirmationCode": "ABC12345",
-  "paymentTransactionId": "transaction-id-1",
-  "createdAt": "2023-03-09T...",
-  "updatedAt": "2023-03-09T..."
+  "paymentTransactionId": "payment-id-1",
+  "expiresAt": null,
+  "createdAt": "2025-02-02T...",
+  "updatedAt": "2025-02-02T..."
 }
 ```
 
-Response (nếu thanh toán thất bại - 20% xác suất):
-
-```json
-{
-  "statusCode": 400,
-  "message": "Payment processing failed. Please try again.",
-  "error": "Bad Request"
-}
-```
-
-### Bước 8: Hủy đặt chỗ (nếu cần)
+### Bước 8: Hủy đặt chỗ
 
 #### 8.1. Hủy đặt chỗ
 
 ```
 DELETE /api/bookings/{bookingId}
 ```
-
-Thay `{bookingId}` bằng ID của đặt chỗ.
 
 Body:
 
@@ -381,19 +388,17 @@ Body:
 }
 ```
 
-Response: HTTP 204 No Content (nếu thành công)
+Response: 204 No Content
 
-### Bước 9: Kiểm tra đặt chỗ đã hết hạn
+### Bước 9: Kiểm tra đặt chỗ hết hạn
 
-#### 9.1. Đợi hơn 10 phút sau khi đặt chỗ (hoặc điều chỉnh thời gian hết hạn trong cấu hình)
-
-#### 9.2. Kiểm tra lại trạng thái đặt chỗ
+Đợi thời gian timeout (mặc định 10 phút) và kiểm tra trạng thái đặt chỗ:
 
 ```
 GET /api/bookings/check?id={bookingId}&email={email}
 ```
 
-Response (nếu đã hết hạn):
+Response:
 
 ```json
 {
@@ -403,96 +408,63 @@ Response (nếu đã hết hạn):
   "customerName": "Nguyễn Văn A",
   "phoneNumber": "0123456789",
   "status": "expired",
-  "confirmationCode": "ABC12345",
-  "seat": {
-    "id": "seat-id-1",
-    "row": 0,
-    "column": 0,
-    "label": "A1",
-    "roomId": "room-id-1",
-    "isActive": true
-  },
-  "createdAt": "2023-03-09T...",
-  "updatedAt": "2023-03-09T..."
+  "expiresAt": "2025-02-02T...",
+  "createdAt": "2025-02-02T...",
+  "updatedAt": "2025-02-02T..."
 }
 ```
 
-### Bước 10: Kiểm tra race condition (đặt chỗ đồng thời)
+### Bước 10: Test race condition
 
-#### 10.1. Gửi nhiều request đặt chỗ cùng lúc cho cùng một chỗ ngồi
+Để test race condition, gửi nhiều yêu cầu đặt chỗ đồng thời cho cùng một chỗ ngồi:
 
-Sử dụng công cụ như Apache JMeter hoặc viết script để gửi nhiều request đồng thời:
+1. Gửi nhiều yêu cầu đồng thời cho cùng một ghế
+2. Tất cả các yêu cầu đều nhận được requestId (status 202)
+3. Chỉ một yêu cầu được xử lý thành công, các yêu cầu khác sẽ thất bại khi xử lý
+4. Kiểm tra trạng thái của từng yêu cầu để xác định yêu cầu nào thành công
 
-```
-POST /api/bookings
-```
+## Các trường hợp test bổ sung
 
-Body:
+1. **Test đặt chỗ đã bị vô hiệu hóa**: Thử đặt chỗ đã bị vô hiệu hóa (isActive = false)
+2. **Test đặt chỗ đã được đặt**: Thử đặt chỗ đã được đặt và xác nhận
+3. **Test xác nhận đặt chỗ đã xác nhận**: Thử xác nhận đặt chỗ đã được xác nhận
+4. **Test xác nhận đặt chỗ đã hết hạn**: Thử xác nhận đặt chỗ đã hết hạn
 
-```json
-{
-  "seatId": "seat-id-1",
-  "email": "user1@example.com",
-  "customerName": "Nguyễn Văn A",
-  "phoneNumber": "0123456789"
-}
-```
+## Kiến trúc chi tiết
 
-```json
-{
-  "seatId": "seat-id-1",
-  "email": "user2@example.com",
-  "customerName": "Trần Thị B",
-  "phoneNumber": "0987654321"
-}
-```
+### Kafka trong hệ thống đặt chỗ
 
-Chỉ một request sẽ thành công, các request khác sẽ nhận được lỗi:
+Kafka được sử dụng để xử lý khối lượng lớn yêu cầu đặt chỗ đồng thời. Luồng xử lý như sau:
 
-```json
-{
-  "statusCode": 409,
-  "message": "Seat is already booked or reserved",
-  "error": "Conflict"
-}
-```
+1. **API Layer** nhận yêu cầu đặt chỗ và gửi đến topic `booking-requests` trong Kafka
+2. **BookingConsumerService** đăng ký với topic `booking-requests` và xử lý các yêu cầu
+3. Khi xử lý yêu cầu, **BookingConsumerService** sử dụng **Distributed Locking** để đảm bảo không có race condition
+4. Sau khi tạo đặt chỗ, **Reservation Timeout** được thiết lập để tự động hết hạn các đặt chỗ chưa được xác nhận
 
-## Các trường hợp test khác
+### Distributed Locking + Kafka
 
-1. **Test đặt chỗ đã bị vô hiệu hóa**:
+Hệ thống kết hợp cả Kafka và Distributed Locking để tận dụng ưu điểm của cả hai phương pháp:
 
-   - Vô hiệu hóa một chỗ ngồi (cần quyền admin)
-   - Thử đặt chỗ đó
+- **Kafka** xử lý việc nhận và xếp hàng các yêu cầu đặt chỗ, đảm bảo không mất yêu cầu ngay cả khi hệ thống quá tải
+- **Distributed Locking** đảm bảo xử lý tuần tự cho mỗi chỗ ngồi, ngăn chặn race condition
+- **Reservation Timeout** quản lý vòng đời của các đặt chỗ, tự động giải phóng chỗ ngồi không được xác nhận
 
-2. **Test đặt chỗ đã được đặt**:
+Kiến trúc kết hợp này cho phép:
 
-   - Đặt một chỗ ngồi và xác nhận thành công
-   - Thử đặt lại chỗ ngồi đó
+- Xử lý hàng nghìn yêu cầu đồng thời
+- Đảm bảo không có race condition
+- Tự động giải phóng chỗ ngồi không được xác nhận
+- Khả năng phục hồi cao khi hệ thống gặp sự cố
 
-3. **Test hủy đặt chỗ đã xác nhận**:
+## Quản lý Kafka
 
-   - Đặt và xác nhận một chỗ ngồi
-   - Hủy đặt chỗ đó
+Bạn có thể truy cập Kafka UI tại http://localhost:8080 để quản lý Kafka:
 
-4. **Test đặt chỗ sau khi hết hạn**:
-   - Đặt một chỗ ngồi nhưng không xác nhận
-   - Đợi cho đến khi hết hạn
-   - Đặt lại chỗ ngồi đó
-
-## Kiến trúc hệ thống
-
-### Distributed Locking
-
-Hệ thống sử dụng Redis để triển khai distributed locking, đảm bảo rằng chỉ một request có thể xử lý một chỗ ngồi tại một thời điểm. Điều này ngăn chặn race condition khi nhiều người cùng đặt một chỗ ngồi.
-
-### Reservation Timeout
-
-Mỗi đặt chỗ có thời gian hết hạn (mặc định là 10 phút). Nếu người dùng không xác nhận và thanh toán trong thời gian này, đặt chỗ sẽ tự động hết hạn và chỗ ngồi sẽ được giải phóng cho người khác.
-
-### Thanh toán ngẫu nhiên
-
-Hệ thống mô phỏng quá trình thanh toán với xác suất thành công 80%. Trong môi trường thực tế, bạn có thể tích hợp với các cổng thanh toán thực như PayPal, Stripe, v.v.
+- Xem danh sách topics
+- Xem messages trong topics
+- Xem danh sách consumers và consumer groups
+- Theo dõi trạng thái của Kafka cluster
 
 ## License
 
-Nest is [MIT licensed](LICENSE).
+MIT
