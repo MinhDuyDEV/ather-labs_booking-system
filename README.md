@@ -32,10 +32,10 @@ cd booking-system
 npm install
 ```
 
-3. Tạo file `.env` từ mẫu:
+3. Tạo file `.env`:
 
 ```bash
-cp .env.example .env
+touch .env
 ```
 
 4. Cập nhật các biến môi trường trong file `.env`:
@@ -55,7 +55,7 @@ DB_DATABASE=booking_system
 # Cấu hình Redis
 REDIS_HOST=localhost
 REDIS_PORT=6379
-REDIS_PASSWORD=
+REDIS_PASSWORD=redis123
 
 # Cấu hình JWT
 JWT_SECRET=your_jwt_secret_key
