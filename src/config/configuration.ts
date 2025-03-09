@@ -24,4 +24,10 @@ export default () => ({
   booking: {
     timeoutMinutes: parseInt(process.env.BOOKING_TIMEOUT_MINUTES, 10) || 10,
   },
+
+  kafka: {
+    brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
+    clientId: process.env.KAFKA_CLIENT_ID || 'booking-system',
+    groupId: process.env.KAFKA_GROUP_ID || 'booking-system-group',
+  },
 });

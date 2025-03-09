@@ -20,4 +20,8 @@ export const validationSchema = Joi.object({
   JWT_EXPIRES_IN: Joi.string().default('1d'),
 
   BOOKING_TIMEOUT_MINUTES: Joi.number().default(10),
+
+  KAFKA_BROKERS: Joi.string().default('localhost:9092'),
+  KAFKA_CLIENT_ID: Joi.string().default('booking-system'),
+  KAFKA_GROUP_ID: Joi.string().default('booking-system-group'),
 });

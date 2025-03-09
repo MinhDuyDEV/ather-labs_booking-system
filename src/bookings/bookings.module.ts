@@ -8,6 +8,8 @@ import { Booking } from './entities/booking.entity';
 import { Seat } from 'src/seats/entities/seat.entity';
 import { LockingModule } from 'src/locking/locking.module';
 import { PaymentsModule } from 'src/payments/payments.module';
+import { KafkaModule } from 'src/kafka/kafka.module';
+import { KafkaProducerService } from 'src/kafka/kafka-producer.service';
 
 @Module({
   imports: [
@@ -15,9 +17,10 @@ import { PaymentsModule } from 'src/payments/payments.module';
     LockingModule,
     PaymentsModule,
     ScheduleModule.forRoot(),
+    KafkaModule,
   ],
   controllers: [BookingsController],
-  providers: [BookingsService, BookingTimeoutService],
+  providers: [BookingsService, BookingTimeoutService, KafkaProducerService],
   exports: [BookingsService],
 })
 export class BookingsModule {}

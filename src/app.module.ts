@@ -9,6 +9,7 @@ import { BookingsModule } from './bookings/bookings.module';
 import { PaymentsModule } from './payments/payments.module';
 import { RedisModule } from './redis/redis.module';
 import { LockingModule } from './locking/locking.module';
+import { KafkaModule } from './kafka/kafka.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { LockingModule } from './locking/locking.module';
     LockingModule,
     PaymentsModule,
     BookingsModule,
+    KafkaModule,
   ],
 })
 export class AppModule {}
