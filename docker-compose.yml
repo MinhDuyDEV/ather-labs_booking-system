@@ -15,6 +15,14 @@ services:
     networks:
       - booking-system-network
 
+  redis:
+    container_name: booking-system-redis
+    image: redis:latest
+    ports:
+      - '6379:6379'
+    networks:
+      - booking-system-network
+
 volumes:
   postgres_data:
 
