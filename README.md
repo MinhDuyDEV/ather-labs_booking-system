@@ -47,8 +47,70 @@ Hệ thống đặt chỗ xây dựng với NestJS, áp dụng Distributed Locki
 - PostgreSQL
 - Redis
 - Kafka & Zookeeper
+- Docker & Docker Compose (tùy chọn)
 
 ## Cài đặt
+
+### Phương pháp 1: Sử dụng Docker Compose (Khuyến nghị)
+
+1. Clone repository:
+
+```bash
+git clone https://github.com/MinhDuyDEV/ather-labs_booking-system.git
+cd booking-system
+```
+
+2. Tạo file `.env`:
+
+```bash
+touch .env
+```
+
+3. Cập nhật các biến môi trường trong file `.env`:
+
+```bash
+# Cấu hình ứng dụng
+NODE_ENV=development
+PORT=3000
+
+# Cấu hình cơ sở dữ liệu
+DB_HOST=db
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+DB_DATABASE=booking-system
+
+# Cấu hình Redis
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# Cấu hình JWT
+JWT_SECRET=your_jwt_secret_key
+JWT_EXPIRES_IN=1d
+
+# Cấu hình đặt chỗ
+BOOKING_TIMEOUT_MINUTES=10
+
+# Cấu hình Kafka
+KAFKA_BROKERS=kafka:29092
+KAFKA_CLIENT_ID=booking-system
+KAFKA_GROUP_ID=booking-system-group
+```
+
+4. Khởi động tất cả các dịch vụ với Docker Compose:
+
+```bash
+# Môi trường phát triển (với hot-reload)
+docker-compose up -d
+
+# Môi trường production
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+Ứng dụng sẽ chạy tại http://localhost:3000
+
+### Phương pháp 2: Cài đặt thủ công
 
 1. Clone repository:
 
@@ -81,12 +143,12 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_USERNAME=postgres
 DB_PASSWORD=postgres
-DB_DATABASE=booking_system
+DB_DATABASE=booking-system
 
 # Cấu hình Redis
 REDIS_HOST=localhost
 REDIS_PORT=6379
-REDIS_PASSWORD=redis123
+REDIS_PASSWORD=
 
 # Cấu hình JWT
 JWT_SECRET=your_jwt_secret_key
@@ -101,10 +163,10 @@ KAFKA_CLIENT_ID=booking-system
 KAFKA_GROUP_ID=booking-system-group
 ```
 
-5. Khởi động các dịch vụ với Docker Compose:
+5. Khởi động các dịch vụ phụ thuộc với Docker Compose:
 
 ```bash
-docker-compose up -d
+docker-compose up -d db redis zookeeper kafka kafka-ui
 ```
 
 6. Khởi động ứng dụng:
@@ -455,6 +517,33 @@ Kiến trúc kết hợp này cho phép:
 - Đảm bảo không có race condition
 - Tự động giải phóng chỗ ngồi không được xác nhận
 - Khả năng phục hồi cao khi hệ thống gặp sự cố
+
+## Quản lý Docker
+
+### Các lệnh Docker Compose hữu ích
+
+```bash
+# Khởi động tất cả các dịch vụ
+docker-compose up -d
+
+# Xem logs của tất cả các dịch vụ
+docker-compose logs -f
+
+# Xem logs của một dịch vụ cụ thể
+docker-compose logs -f app
+
+# Dừng tất cả các dịch vụ
+docker-compose down
+
+# Dừng và xóa tất cả các dịch vụ, volumes
+docker-compose down -v
+
+# Khởi động lại một dịch vụ cụ thể
+docker-compose restart app
+
+# Xây dựng lại các images
+docker-compose build
+```
 
 ## Quản lý Kafka
 

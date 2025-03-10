@@ -1,6 +1,51 @@
 version: '3.8'
 
 services:
+  app:
+    container_name: booking-system-app
+    build:
+      context: .
+      dockerfile: ./Dockerfile.dev
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - NODE_OPTIONS=--experimental-global-webcrypto
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=postgres
+      - DB_DATABASE=booking-system
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=your_jwt_secret_key
+      - JWT_EXPIRES_IN=1d
+      - BOOKING_TIMEOUT_MINUTES=10
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_CLIENT_ID=booking-system
+      - KAFKA_GROUP_ID=booking-system-group
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - booking-system-network
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/api']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   db:
     container_name: booking-system-db
     image: postgres:15-alpine
@@ -14,6 +59,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - booking-system-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   redis:
     container_name: booking-system-redis
@@ -22,6 +73,14 @@ services:
       - '6379:6379'
     networks:
       - booking-system-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
 
   zookeeper:
     container_name: booking-system-zookeeper
@@ -29,16 +88,29 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
     ports:
       - '2181:2181'
     networks:
       - booking-system-network
+    healthcheck:
+      test: ['CMD-SHELL', 'echo stat | nc localhost 2181']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: always
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
 
   kafka:
     container_name: booking-system-kafka
     image: confluentinc/cp-kafka:7.3.0
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
       - '9092:9092'
     environment:
@@ -48,15 +120,42 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+      KAFKA_DELETE_TOPIC_ENABLE: 'true'
+      # Additional settings for better stability
+      KAFKA_CONTROLLED_SHUTDOWN_ENABLE: 'true'
+      KAFKA_AUTO_LEADER_REBALANCE_ENABLE: 'true'
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: 'false'
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 1048576
+      KAFKA_MESSAGE_MAX_BYTES: 1000012
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 104857600
     networks:
       - booking-system-network
+    healthcheck:
+      test: ['CMD-SHELL', 'kafka-topics --bootstrap-server kafka:29092 --list']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: always
+    volumes:
+      - kafka_data:/var/lib/kafka/data
 
   kafka-ui:
     container_name: booking-system-kafka-ui
     image: provectuslabs/kafka-ui:latest
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     ports:
       - '8080:8080'
     environment:
@@ -65,9 +164,14 @@ services:
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
     networks:
       - booking-system-network
+    restart: always
 
 volumes:
   postgres_data:
+  kafka_data:
+  redis_data:
+  zookeeper_data:
+  zookeeper_log:
 
 networks:
   booking-system-network:
