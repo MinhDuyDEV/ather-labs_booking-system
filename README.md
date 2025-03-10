@@ -58,7 +58,7 @@ Hệ thống đặt chỗ xây dựng với NestJS, áp dụng Distributed Locki
 
 ```bash
 git clone https://github.com/MinhDuyDEV/ather-labs_booking-system.git
-cd booking-system
+cd ather-labs_booking-system
 ```
 
 2. Tạo file `.env`:
@@ -104,9 +104,6 @@ KAFKA_GROUP_ID=booking-system-group
 ```bash
 # Môi trường phát triển (với hot-reload)
 docker-compose up -d
-
-# Môi trường production
-docker-compose -f docker-compose.prod.yml up -d
 ```
 
 Ứng dụng sẽ chạy tại http://localhost:3000
@@ -117,7 +114,7 @@ docker-compose -f docker-compose.prod.yml up -d
 
 ```bash
 git clone https://github.com/MinhDuyDEV/ather-labs_booking-system.git
-cd booking-system
+cd ather-labs_booking-system
 ```
 
 2. Cài đặt các gói phụ thuộc:
