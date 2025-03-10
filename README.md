@@ -6,6 +6,7 @@ Hệ thống đặt chỗ xây dựng với NestJS, áp dụng Distributed Locki
 
 - **Quản lý phòng và chỗ ngồi**: Tạo, cập nhật, xóa phòng và chỗ ngồi
 - **Đặt chỗ không cần đăng nhập**: Người dùng có thể đặt chỗ chỉ với email và thông tin cá nhân
+- **Đặt nhiều ghế cùng lúc**: Hỗ trợ đặt tối đa 10 ghế trong một lần đặt chỗ
 - **Distributed Locking**: Ngăn chặn race condition khi nhiều người đặt cùng một chỗ ngồi
 - **Reservation Timeout**: Tự động hết hạn các đặt chỗ chưa được xác nhận sau một khoảng thời gian
 - **Xử lý bất đồng bộ với Kafka**: Xử lý hàng nghìn yêu cầu đặt chỗ đồng thời
@@ -35,9 +36,9 @@ Hệ thống đặt chỗ xây dựng với NestJS, áp dụng Distributed Locki
 
 1. **API Layer** nhận yêu cầu đặt chỗ và gửi đến **Kafka Broker**
 2. **Consumer Service** lấy yêu cầu từ Kafka và xử lý:
-   - Sử dụng **Redis** để thực hiện Distributed Locking
-   - Kiểm tra tính khả dụng của chỗ ngồi
-   - Tạo đặt chỗ trong **Database**
+   - Sử dụng **Redis** để thực hiện Distributed Locking cho tất cả các ghế được yêu cầu
+   - Kiểm tra tính khả dụng của tất cả các ghế
+   - Tạo đặt chỗ trong **Database** với cùng một mã xác nhận
    - Thiết lập thời gian hết hạn (Reservation Timeout)
 3. **BookingTimeoutService** định kỳ kiểm tra và cập nhật trạng thái các đặt chỗ hết hạn
 
@@ -184,23 +185,7 @@ npm run start:prod
 
 Dưới đây là luồng test đầy đủ để kiểm tra các tính năng của hệ thống đặt chỗ.
 
-### Bước 1: Đăng ký và đăng nhập (dành cho admin)
-
-#### 1.1. Đăng ký tài khoản admin
-
-```
-POST /api/auth/register
-```
-
-Body:
-
-```json
-{
-  "username": "admin",
-  "password": "admin123",
-  "isAdmin": true
-}
-```
+### Bước 1: đăng nhập (dành cho admin)
 
 #### 1.2. Đăng nhập
 
@@ -251,10 +236,9 @@ Body:
 ```json
 {
   "name": "Phòng chiếu 1",
-  "description": "Phòng chiếu phim lớn",
+  "description": "Phòng chiếu phim số 1",
   "rows": 10,
-  "columns": 10,
-  "isActive": true
+  "columns": 10
 }
 ```
 
@@ -262,22 +246,19 @@ Response:
 
 ```json
 {
-  "id": "room-id-1",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "Phòng chiếu 1",
-  "description": "Phòng chiếu phim lớn",
+  "description": "Phòng chiếu phim số 1",
   "rows": 10,
   "columns": 10,
-  "isActive": true,
-  "createdAt": "2025-02-02T...",
-  "updatedAt": "2025-02-02T..."
+  "createdAt": "2023-09-01T12:00:00.000Z",
+  "updatedAt": "2023-09-01T12:00:00.000Z"
 }
 ```
 
-Lưu `id` của phòng để sử dụng cho các bước tiếp theo.
+### Bước 3: Tạo ghế cho phòng
 
-### Bước 3: Tạo chỗ ngồi cho phòng (cần quyền admin)
-
-#### 3.1. Tự động tạo chỗ ngồi cho phòng
+#### 3.1. Tạo ghế tự động
 
 ```
 POST /api/seats/room/{roomId}/generate
@@ -289,59 +270,49 @@ Headers:
 Authorization: Bearer {access_token}
 ```
 
-Thay `{roomId}` bằng ID của phòng đã tạo ở bước 2.
-
 Response:
 
 ```json
-[
-  {
-    "id": "seat-id-1",
-    "row": 0,
-    "column": 0,
-    "label": "A1",
-    "roomId": "room-id-1",
-    "isActive": true,
-    "createdAt": "2025-02-02T...",
-    "updatedAt": "2025-02-02T..."
-  }
-  // ... các chỗ ngồi khác
-]
+{
+  "message": "100 seats generated successfully"
+}
 ```
 
-### Bước 4: Xem danh sách chỗ ngồi trong phòng
-
-#### 4.1. Lấy danh sách chỗ ngồi
+### Bước 4: Lấy danh sách ghế trong phòng
 
 ```
 GET /api/seats/room/{roomId}
 ```
 
-Thay `{roomId}` bằng ID của phòng.
-
 Response:
 
 ```json
 [
   {
-    "id": "seat-id-1",
-    "row": 0,
-    "column": 0,
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "row": 1,
+    "column": 1,
     "label": "A1",
-    "roomId": "room-id-1",
     "isActive": true,
-    "createdAt": "2025-02-02T...",
-    "updatedAt": "2025-02-02T..."
+    "price": 100.0,
+    "roomId": "550e8400-e29b-41d4-a716-446655440000"
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440002",
+    "row": 1,
+    "column": 2,
+    "label": "A2",
+    "isActive": true,
+    "price": 100.0,
+    "roomId": "550e8400-e29b-41d4-a716-446655440000"
   }
-  // ... các chỗ ngồi khác
+  // ...
 ]
 ```
 
-Lưu `id` của một chỗ ngồi để sử dụng cho bước tiếp theo.
-
 ### Bước 5: Đặt chỗ (không cần đăng nhập)
 
-#### 5.1. Tạo đặt chỗ mới
+#### 5.1. Đặt một ghế
 
 ```
 POST /api/bookings
@@ -351,59 +322,170 @@ Body:
 
 ```json
 {
-  "seatId": "seat-id-1",
+  "seatIds": ["550e8400-e29b-41d4-a716-446655440001"],
   "email": "user@example.com",
   "customerName": "Nguyễn Văn A",
   "phoneNumber": "0123456789"
 }
 ```
 
-Response (với Kafka):
+Response:
 
 ```json
 {
-  "requestId": "550e8400-e29b-41d4-a716-446655440000",
-  "message": "Your booking request has been received and is being processed. Please check your email for confirmation."
+  "requestId": "7f9c24e0-3f70-4b9a-bf4b-8b984dc4cd3d",
+  "message": "Your booking request has been received and is being processed. Please check the status using the provided URL.",
+  "checkStatusUrl": "/bookings/request/7f9c24e0-3f70-4b9a-bf4b-8b984dc4cd3d"
 }
 ```
 
-**Lưu ý**: Với kiến trúc Kafka, yêu cầu đặt chỗ được xử lý bất đồng bộ. Bạn sẽ nhận được một `requestId` và cần đợi một khoảng thời gian ngắn để yêu cầu được xử lý.
-
-### Bước 6: Kiểm tra trạng thái đặt chỗ
-
-#### 6.1. Kiểm tra trạng thái
+#### 5.2. Đặt nhiều ghế cùng lúc
 
 ```
-GET /api/bookings/check?id={bookingId}&email={email}
+POST /api/bookings
 ```
 
-Thay `{bookingId}` bằng ID của đặt chỗ và `{email}` bằng email đã sử dụng để đặt chỗ.
+Body:
 
-**Lưu ý**: Với kiến trúc Kafka, bạn cần biết `bookingId`. Trong môi trường thực tế, bạn có thể:
-
-- Kiểm tra logs để tìm ID
-- Triển khai một endpoint để kiểm tra trạng thái theo requestId
-- Gửi email thông báo với booking ID
+```json
+{
+  "seatIds": [
+    "550e8400-e29b-41d4-a716-446655440001",
+    "550e8400-e29b-41d4-a716-446655440002",
+    "550e8400-e29b-41d4-a716-446655440003"
+  ],
+  "email": "user@example.com",
+  "customerName": "Nguyễn Văn A",
+  "phoneNumber": "0123456789"
+}
+```
 
 Response:
 
 ```json
 {
-  "id": "booking-id-1",
-  "seatId": "seat-id-1",
-  "email": "user@example.com",
-  "customerName": "Nguyễn Văn A",
-  "phoneNumber": "0123456789",
-  "status": "pending",
-  "expiresAt": "2025-02-02T...",
-  "createdAt": "2025-02-02T...",
-  "updatedAt": "2025-02-02T..."
+  "requestId": "7f9c24e0-3f70-4b9a-bf4b-8b984dc4cd3d",
+  "message": "Your booking request has been received and is being processed. Please check the status using the provided URL.",
+  "checkStatusUrl": "/bookings/request/7f9c24e0-3f70-4b9a-bf4b-8b984dc4cd3d"
 }
 ```
 
-### Bước 7: Xác nhận đặt chỗ và thanh toán
+#### 5.3. Đặt ghế đã được đặt trước đó
 
-#### 7.1. Xác nhận đặt chỗ
+Nếu bạn cố gắng đặt ghế đã được người khác đặt trước đó (kể cả khi ghế đó chỉ đang ở trạng thái PENDING và chưa hết hạn), hệ thống sẽ trả về thông báo lỗi chi tiết:
+
+```
+GET /api/bookings/request/{requestId}
+```
+
+Response:
+
+```json
+{
+  "message": "The following seats are already booked: A1, A2. Please select different seats.",
+  "error": {
+    "message": "The following seats are already booked or reserved: A1, A2",
+    "code": "SEATS_ALREADY_BOOKED",
+    "seats": "A1, A2"
+  }
+}
+```
+
+### Bước 6: Kiểm tra trạng thái đặt chỗ
+
+```
+GET /api/bookings/request/{requestId}
+```
+
+Response (nếu đã xử lý xong):
+
+```json
+{
+  "confirmationCode": "ABC12345",
+  "checkBookingsUrl": "/bookings/check-group?code=ABC12345&email=YOUR_EMAIL"
+}
+```
+
+### Bước 7: Xem chi tiết đặt chỗ
+
+#### 7.1. Xem chi tiết một đặt chỗ
+
+```
+GET /api/bookings/check?id={bookingId}&email={email}
+```
+
+Response:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440010",
+  "email": "user@example.com",
+  "customerName": "Nguyễn Văn A",
+  "phoneNumber": "0123456789",
+  "seatId": "550e8400-e29b-41d4-a716-446655440001",
+  "status": "pending",
+  "expiresAt": "2023-09-01T12:10:00.000Z",
+  "confirmationCode": "ABC12345",
+  "createdAt": "2023-09-01T12:00:00.000Z",
+  "updatedAt": "2023-09-01T12:00:00.000Z",
+  "seat": {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "label": "A1",
+    "price": 100.0
+  }
+}
+```
+
+#### 7.2. Xem chi tiết nhiều đặt chỗ cùng mã xác nhận
+
+```
+GET /api/bookings/check-group?code={confirmationCode}&email={email}
+```
+
+Response:
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440010",
+    "email": "user@example.com",
+    "customerName": "Nguyễn Văn A",
+    "phoneNumber": "0123456789",
+    "seatId": "550e8400-e29b-41d4-a716-446655440001",
+    "status": "pending",
+    "expiresAt": "2023-09-01T12:10:00.000Z",
+    "confirmationCode": "ABC12345",
+    "createdAt": "2023-09-01T12:00:00.000Z",
+    "updatedAt": "2023-09-01T12:00:00.000Z",
+    "seat": {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "label": "A1",
+      "price": 100.0
+    }
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440011",
+    "email": "user@example.com",
+    "customerName": "Nguyễn Văn A",
+    "phoneNumber": "0123456789",
+    "seatId": "550e8400-e29b-41d4-a716-446655440002",
+    "status": "pending",
+    "expiresAt": "2023-09-01T12:10:00.000Z",
+    "confirmationCode": "ABC12345",
+    "createdAt": "2023-09-01T12:00:00.000Z",
+    "updatedAt": "2023-09-01T12:00:00.000Z",
+    "seat": {
+      "id": "550e8400-e29b-41d4-a716-446655440002",
+      "label": "A2",
+      "price": 100.0
+    }
+  }
+]
+```
+
+### Bước 8: Xác nhận đặt chỗ và thanh toán
+
+#### 8.1. Xác nhận một đặt chỗ
 
 ```
 POST /api/bookings/{bookingId}/confirm
@@ -421,22 +503,55 @@ Response:
 
 ```json
 {
-  "id": "booking-id-1",
-  "seatId": "seat-id-1",
+  "id": "550e8400-e29b-41d4-a716-446655440010",
   "email": "user@example.com",
   "customerName": "Nguyễn Văn A",
   "phoneNumber": "0123456789",
+  "seatId": "550e8400-e29b-41d4-a716-446655440001",
   "status": "confirmed",
-  "paymentTransactionId": "payment-id-1",
   "expiresAt": null,
-  "createdAt": "2025-02-02T...",
-  "updatedAt": "2025-02-02T..."
+  "confirmationCode": "ABC12345",
+  "paymentTransactionId": "tx_123456789",
+  "createdAt": "2023-09-01T12:00:00.000Z",
+  "updatedAt": "2023-09-01T12:05:00.000Z"
 }
 ```
 
-### Bước 8: Hủy đặt chỗ
+#### 8.2. Xác nhận nhiều đặt chỗ cùng lúc
 
-#### 8.1. Hủy đặt chỗ
+```
+POST /api/bookings/confirm-group
+```
+
+Body:
+
+```json
+{
+  "confirmationCode": "ABC12345",
+  "email": "user@example.com"
+}
+```
+
+Response:
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440010",
+    "status": "confirmed",
+    "paymentTransactionId": "tx_123456789"
+  },
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440011",
+    "status": "confirmed",
+    "paymentTransactionId": "tx_123456789"
+  }
+]
+```
+
+### Bước 9: Hủy đặt chỗ
+
+#### 9.1. Hủy một đặt chỗ
 
 ```
 DELETE /api/bookings/{bookingId}
@@ -450,11 +565,23 @@ Body:
 }
 ```
 
-Response: 204 No Content
+#### 9.2. Hủy nhiều đặt chỗ cùng lúc
 
-### Bước 9: Kiểm tra đặt chỗ hết hạn
+```
+DELETE /api/bookings/group/{confirmationCode}
+```
 
-Đợi thời gian timeout (mặc định 10 phút) và kiểm tra trạng thái đặt chỗ:
+Body:
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+### Bước 10: Kiểm tra đặt chỗ hết hạn
+
+Sau khi đợi thời gian timeout (mặc định 10 phút), kiểm tra lại trạng thái đặt chỗ:
 
 ```
 GET /api/bookings/check?id={bookingId}&email={email}
@@ -464,96 +591,43 @@ Response:
 
 ```json
 {
-  "id": "booking-id-1",
-  "seatId": "seat-id-1",
-  "email": "user@example.com",
-  "customerName": "Nguyễn Văn A",
-  "phoneNumber": "0123456789",
+  "id": "550e8400-e29b-41d4-a716-446655440010",
   "status": "expired",
-  "expiresAt": "2025-02-02T...",
-  "createdAt": "2025-02-02T...",
-  "updatedAt": "2025-02-02T..."
+  "expiresAt": "2023-09-01T12:10:00.000Z"
 }
 ```
 
-### Bước 10: Test race condition
+### Bước 11: Test race condition
 
-Để test race condition, gửi nhiều yêu cầu đặt chỗ đồng thời cho cùng một chỗ ngồi:
+Để test race condition, gửi nhiều request đặt chỗ cùng một ghế đồng thời:
 
-1. Gửi nhiều yêu cầu đồng thời cho cùng một ghế
-2. Tất cả các yêu cầu đều nhận được requestId (status 202)
-3. Chỉ một yêu cầu được xử lý thành công, các yêu cầu khác sẽ thất bại khi xử lý
-4. Kiểm tra trạng thái của từng yêu cầu để xác định yêu cầu nào thành công
+1. Sử dụng công cụ như Apache Benchmark hoặc wrk để gửi nhiều request cùng lúc
+2. Chỉ một request sẽ thành công, các request khác sẽ nhận được lỗi 409 Conflict
+
+```bash
+ab -n 10 -c 10 -p booking-payload.json -T application/json http://localhost:3000/api/bookings
+```
 
 ## Các trường hợp test bổ sung
 
-1. **Test đặt chỗ đã bị vô hiệu hóa**: Thử đặt chỗ đã bị vô hiệu hóa (isActive = false)
-2. **Test đặt chỗ đã được đặt**: Thử đặt chỗ đã được đặt và xác nhận
-3. **Test xác nhận đặt chỗ đã xác nhận**: Thử xác nhận đặt chỗ đã được xác nhận
-4. **Test xác nhận đặt chỗ đã hết hạn**: Thử xác nhận đặt chỗ đã hết hạn
+1. **Đặt ghế đã bị vô hiệu hóa**: Sẽ nhận được lỗi 400 Bad Request
+2. **Đặt ghế đã được đặt**: Sẽ nhận được thông báo lỗi chi tiết về các ghế đã được đặt, bao gồm tên ghế cụ thể
+3. **Xác nhận đặt chỗ đã xác nhận**: Sẽ nhận được lỗi 400 Bad Request
+4. **Xác nhận đặt chỗ đã hết hạn**: Sẽ nhận được lỗi 400 Bad Request
+5. **Đặt nhiều ghế khi một số ghế không khả dụng**: Sẽ nhận được lỗi chi tiết với danh sách các ghế không khả dụng
 
-## Kiến trúc chi tiết
+## Lưu ý
 
-### Kafka trong hệ thống đặt chỗ
+- Thời gian hết hạn đặt chỗ mặc định là 10 phút, có thể thay đổi trong file `.env`
+- Hệ thống sử dụng Distributed Locking để ngăn chặn race condition khi nhiều người đặt cùng một chỗ ngồi
+- Khi đặt nhiều ghế cùng lúc, nếu một ghế không khả dụng, toàn bộ yêu cầu sẽ bị từ chối
+- Hệ thống sẽ ngay lập tức trả về lỗi khi người dùng cố gắng đặt ghế đã được đặt trước đó (kể cả khi ghế đó chỉ đang ở trạng thái PENDING và chưa hết hạn)
+- Thông báo lỗi sẽ bao gồm thông tin chi tiết về các ghế đã được đặt, giúp người dùng dễ dàng chọn ghế khác
 
-Kafka được sử dụng để xử lý khối lượng lớn yêu cầu đặt chỗ đồng thời. Luồng xử lý như sau:
+## Đóng góp
 
-1. **API Layer** nhận yêu cầu đặt chỗ và gửi đến topic `booking-requests` trong Kafka
-2. **BookingConsumerService** đăng ký với topic `booking-requests` và xử lý các yêu cầu
-3. Khi xử lý yêu cầu, **BookingConsumerService** sử dụng **Distributed Locking** để đảm bảo không có race condition
-4. Sau khi tạo đặt chỗ, **Reservation Timeout** được thiết lập để tự động hết hạn các đặt chỗ chưa được xác nhận
+Vui lòng xem file [CONTRIBUTING.md](CONTRIBUTING.md) để biết thêm chi tiết.
 
-### Distributed Locking + Kafka
+## Giấy phép
 
-Hệ thống kết hợp cả Kafka và Distributed Locking để tận dụng ưu điểm của cả hai phương pháp:
-
-- **Kafka** xử lý việc nhận và xếp hàng các yêu cầu đặt chỗ, đảm bảo không mất yêu cầu ngay cả khi hệ thống quá tải
-- **Distributed Locking** đảm bảo xử lý tuần tự cho mỗi chỗ ngồi, ngăn chặn race condition
-- **Reservation Timeout** quản lý vòng đời của các đặt chỗ, tự động giải phóng chỗ ngồi không được xác nhận
-
-Kiến trúc kết hợp này cho phép:
-
-- Xử lý hàng nghìn yêu cầu đồng thời
-- Đảm bảo không có race condition
-- Tự động giải phóng chỗ ngồi không được xác nhận
-- Khả năng phục hồi cao khi hệ thống gặp sự cố
-
-## Quản lý Docker
-
-### Các lệnh Docker Compose hữu ích
-
-```bash
-# Khởi động tất cả các dịch vụ
-docker-compose up -d
-
-# Xem logs của tất cả các dịch vụ
-docker-compose logs -f
-
-# Xem logs của một dịch vụ cụ thể
-docker-compose logs -f app
-
-# Dừng tất cả các dịch vụ
-docker-compose down
-
-# Dừng và xóa tất cả các dịch vụ, volumes
-docker-compose down -v
-
-# Khởi động lại một dịch vụ cụ thể
-docker-compose restart app
-
-# Xây dựng lại các images
-docker-compose build
-```
-
-## Quản lý Kafka
-
-Bạn có thể truy cập Kafka UI tại http://localhost:8080 để quản lý Kafka:
-
-- Xem danh sách topics
-- Xem messages trong topics
-- Xem danh sách consumers và consumer groups
-- Theo dõi trạng thái của Kafka cluster
-
-## License
-
-MIT
+Dự án này được cấp phép theo giấy phép MIT - xem file [LICENSE](LICENSE) để biết thêm chi tiết.

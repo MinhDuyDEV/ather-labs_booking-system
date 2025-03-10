@@ -5,6 +5,13 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { RedisService } from '../redis/redis.service';
 import { Interval } from '@nestjs/schedule';
 
+// Định nghĩa interface cho thông tin lỗi
+interface BookingErrorInfo {
+  message: string;
+  code: string;
+  seats?: string;
+}
+
 @Injectable()
 export class BookingConsumerService implements OnModuleInit {
   private readonly logger = new Logger(BookingConsumerService.name);
@@ -95,20 +102,22 @@ export class BookingConsumerService implements OnModuleInit {
       }
 
       // Check if this request has already been processed
-      const existingBookingId = await this.redisService.get(
+      const existingConfirmationCode = await this.redisService.get(
         `${this.REQUEST_ID_PREFIX}${requestId}`,
       );
 
-      if (existingBookingId) {
+      if (existingConfirmationCode) {
         this.logger.log(
-          `Request ${requestId} already processed with booking ID ${existingBookingId}. Skipping.`,
+          `Request ${requestId} already processed with confirmation code ${existingConfirmationCode}. Skipping.`,
         );
         return;
       }
 
       if (
         !bookingData ||
-        !bookingData.seatId ||
+        !bookingData.seatIds ||
+        !Array.isArray(bookingData.seatIds) ||
+        bookingData.seatIds.length === 0 ||
         !bookingData.email ||
         !bookingData.customerName
       ) {
@@ -119,11 +128,11 @@ export class BookingConsumerService implements OnModuleInit {
       }
 
       this.logger.log(
-        `Creating booking for seat ${bookingData.seatId} and email ${bookingData.email}`,
+        `Creating booking for seats [${bookingData.seatIds.join(', ')}] and email ${bookingData.email}`,
       );
 
       const createBookingDto: CreateBookingDto = {
-        seatId: bookingData.seatId,
+        seatIds: bookingData.seatIds,
         email: bookingData.email,
         customerName: bookingData.customerName,
         phoneNumber: bookingData.phoneNumber,
@@ -131,18 +140,25 @@ export class BookingConsumerService implements OnModuleInit {
 
       // Use a try-catch block specifically for the booking creation
       try {
-        const booking =
+        const bookings =
           await this.bookingsService.createBooking(createBookingDto);
 
-        // Store the mapping between requestId and bookingId in Redis
+        if (bookings.length === 0) {
+          throw new Error('No bookings were created');
+        }
+
+        // All bookings will have the same confirmation code
+        const confirmationCode = bookings[0].confirmationCode;
+
+        // Store the mapping between requestId and confirmationCode in Redis
         await this.redisService.set(
           `${this.REQUEST_ID_PREFIX}${requestId}`,
-          booking.id,
+          confirmationCode,
           this.REQUEST_ID_EXPIRY,
         );
 
         this.logger.log(
-          `Booking created successfully: ${booking.id} for request: ${requestId}`,
+          `${bookings.length} bookings created successfully with confirmation code: ${confirmationCode} for request: ${requestId}`,
         );
 
         // send notification to the user about the booking status
@@ -152,18 +168,41 @@ export class BookingConsumerService implements OnModuleInit {
           bookingError.stack,
         );
 
-        // If the seat is already booked, we can mark this request as processed
-        // to avoid retrying it unnecessarily
-        if (bookingError.message.includes('already booked')) {
-          await this.redisService.set(
-            `${this.REQUEST_ID_PREFIX}${requestId}`,
-            'CONFLICT',
-            this.REQUEST_ID_EXPIRY,
-          );
-          this.logger.log(
-            `Marked request ${requestId} as conflicted (seat already booked)`,
-          );
+        // Lưu thông tin chi tiết về lỗi
+        let errorInfo: BookingErrorInfo = {
+          message: bookingError.message,
+          code: 'BOOKING_ERROR',
+        };
+
+        // Nếu là lỗi ghế đã được đặt, lưu thông tin chi tiết hơn
+        if (bookingError.message.includes('already booked or reserved')) {
+          errorInfo = {
+            message: bookingError.message,
+            code: 'SEATS_ALREADY_BOOKED',
+            seats: bookingError.message.split(
+              'already booked or reserved: ',
+            )[1],
+          };
+        } else if (bookingError.message.includes('being processed')) {
+          errorInfo = {
+            message: bookingError.message,
+            code: 'SEATS_BEING_PROCESSED',
+            seats: bookingError.message.split(
+              'being processed by another request: ',
+            )[1],
+          };
         }
+
+        // Lưu thông tin lỗi vào Redis để có thể trả về cho người dùng
+        await this.redisService.set(
+          `${this.REQUEST_ID_PREFIX}${requestId}`,
+          JSON.stringify(errorInfo),
+          this.REQUEST_ID_EXPIRY,
+        );
+
+        this.logger.log(
+          `Marked request ${requestId} as failed with error: ${JSON.stringify(errorInfo)}`,
+        );
 
         // Re-throw to be caught by the outer try-catch
         throw bookingError;

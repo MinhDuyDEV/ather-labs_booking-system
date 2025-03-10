@@ -26,6 +26,9 @@ export class Seat {
   @Column({ default: true })
   isActive: boolean;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 100.0 })
+  price: number;
+
   @ManyToOne(() => Room, { onDelete: 'CASCADE' })
   @JoinColumn()
   room: Room;

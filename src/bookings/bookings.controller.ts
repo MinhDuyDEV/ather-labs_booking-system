@@ -49,7 +49,11 @@ export class BookingsController {
           requestId,
           timestamp: new Date().toISOString(),
         },
-        createBookingDto.seatId, // Use seatId as the message key for ordering
+        // Use the first seatId as the message key for ordering
+        // This ensures all bookings for the same seat go to the same partition
+        createBookingDto.seatIds.length > 0
+          ? createBookingDto.seatIds[0]
+          : null,
       );
 
       return {
@@ -74,23 +78,59 @@ export class BookingsController {
   async getBookingByRequestId(
     @Param('requestId') requestId: string,
   ): Promise<
-    { bookingId: string; checkBookingUrl: string } | { message: string }
+    | { confirmationCode: string; checkBookingsUrl: string }
+    | { message: string; error?: any }
   > {
     try {
-      const bookingId = await this.redisService.get(
+      const result = await this.redisService.get(
         `${this.REQUEST_ID_PREFIX}${requestId}`,
       );
 
-      if (!bookingId) {
+      if (!result) {
         return {
           message:
             'Booking is still being processed or request ID is invalid. Please try again later.',
         };
       }
 
+      // Kiểm tra xem kết quả có phải là JSON không
+      try {
+        const parsedResult = JSON.parse(result);
+
+        // Nếu có mã lỗi, đây là thông tin lỗi
+        if (parsedResult.code) {
+          let errorMessage = 'Failed to create booking.';
+
+          if (parsedResult.code === 'SEATS_ALREADY_BOOKED') {
+            errorMessage = `The following seats are already booked: ${parsedResult.seats}. Please select different seats.`;
+          } else if (parsedResult.code === 'SEATS_BEING_PROCESSED') {
+            errorMessage = `The following seats are currently being processed: ${parsedResult.seats}. Please try again later.`;
+          }
+
+          return {
+            message: errorMessage,
+            error: parsedResult,
+          };
+        }
+
+        // Nếu không có mã lỗi, có thể là confirmation code dạng JSON
+        if (typeof parsedResult === 'string') {
+          return {
+            confirmationCode: parsedResult,
+            checkBookingsUrl: `/bookings/check-group?code=${parsedResult}&email=YOUR_EMAIL`,
+          };
+        }
+      } catch (e) {
+        // Nếu không phải JSON, đây là confirmation code dạng string
+        return {
+          confirmationCode: result,
+          checkBookingsUrl: `/bookings/check-group?code=${result}&email=YOUR_EMAIL`,
+        };
+      }
+
+      // Trường hợp không xác định
       return {
-        bookingId,
-        checkBookingUrl: `/bookings/check?id=${bookingId}&email=YOUR_EMAIL`,
+        message: 'Booking status is unknown. Please contact support.',
       };
     } catch (error) {
       this.logger.error(
@@ -112,12 +152,34 @@ export class BookingsController {
     return this.bookingsService.confirmBookingWithPayment(id, email);
   }
 
+  @Post('confirm-group')
+  async confirmGroup(
+    @Body('confirmationCode') confirmationCode: string,
+    @Body('email') email: string,
+  ): Promise<Booking[]> {
+    return this.bookingsService.confirmBookingsWithPayment(
+      confirmationCode,
+      email,
+    );
+  }
+
   @Get('check')
   async checkBooking(
     @Query('id') id: string,
     @Query('email') email: string,
   ): Promise<Booking> {
     return this.bookingsService.getBookingByIdAndEmail(id, email);
+  }
+
+  @Get('check-group')
+  async checkBookingGroup(
+    @Query('code') confirmationCode: string,
+    @Query('email') email: string,
+  ): Promise<Booking[]> {
+    return this.bookingsService.getBookingsByConfirmationCode(
+      confirmationCode,
+      email,
+    );
   }
 
   @Delete(':id')
@@ -127,6 +189,18 @@ export class BookingsController {
     @Body('email') email: string,
   ): Promise<void> {
     await this.bookingsService.cancelBookingByEmail(id, email);
+  }
+
+  @Delete('group/:code')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async cancelGroup(
+    @Param('code') confirmationCode: string,
+    @Body('email') email: string,
+  ): Promise<void> {
+    await this.bookingsService.cancelBookingsByConfirmationCode(
+      confirmationCode,
+      email,
+    );
   }
 
   // endpoint for user to get their bookings
